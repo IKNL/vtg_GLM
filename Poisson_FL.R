@@ -48,7 +48,7 @@ master_beta=function(...,beta=NULL,reg_type=c('gaussian','poisson','binomial')){
     }
   f=solve(a,b, tol=2*.Machine$double.eps)
   se=sqrt(diag(solve(a)*disp))
-  return(list(coef=cbind(beta,f),se=se,disp=disp,est.disp=est.disp,rank=nobs-nvars))
+  return(list(coef=cbind(beta,f),se=se,disp=disp,est.disp=est.disp,nobs=nobs,nvars=nvars))
 }
 
 node_deviance=function(formula,Data,weights=NULL,reg_type=c('gaussian','poisson','binomial'),beta,iter){
@@ -74,24 +74,22 @@ node_deviance=function(formula,Data,weights=NULL,reg_type=c('gaussian','poisson'
     dev_old=sum(family$dev.resids(y, mu_old,weights))
   }
   eta = X %*% beta[,ncol(beta)] +offset # potentially +offset if you would have an offset argument as well
-  mu = family$linkinv(X %*% beta[,ncol(beta)]) 
+  mu = family$linkinv(eta-offset) 
   dev = sum(family$dev.resids(y, mu,weights))
-  devnull = sum(family$dev.resids(y, sum(weights * y)/sum(weights),weights))
-  return(list(dev_old=dev_old,dev=dev,devnull=devnull))
+  return(list(dev_old=dev_old,dev=dev))
 }
 
-master_convergence=function(...,tol=1e-16,beta,iter,reg_type=c('gaussian','poisson','binomial'),formula){
+master_convergence=function(...,tol=1e-16,beta,iter,reg_type=c('gaussian','poisson','binomial'),formula,maxit){
   x <- list(...)
   dev_old=Reduce(`+`,lapply(1:length(x),function(j) x[[j]]$dev_old))
-  dev_res=Reduce(`+`,lapply(1:length(x),function(j) x[[j]]$dev))
-  dev_null=Reduce(`+`,lapply(1:length(x),function(j) x[[j]]$devnull))
+  dev=Reduce(`+`,lapply(1:length(x),function(j) x[[j]]$dev))
   convergence=(abs(dev - dev_old) / (0.1 + abs(dev)) < tol)
-  if(convergence==FALSE){
+  if(convergence==FALSE & iter<maxit){
     return(list(convergence=convergence))
   }else{
    zvalue <- beta$coef[,ncol(beta$coef)]/beta$se
     if(beta$est.disp){
-      pvalue <- 2 * pt(-abs(zvalue), beta$rank)
+      pvalue <- 2 * pt(-abs(zvalue), beta$nobs-beta$nvars)
     }else{
       pvalue <- 2 * pnorm(-abs(zvalue))
     }
@@ -105,8 +103,9 @@ master_convergence=function(...,tol=1e-16,beta,iter,reg_type=c('gaussian','poiss
     model=formula,
     regression=reg_type,
     iter=iter,
-    dev_res=dev_res,
-    dev_null=dev_null)
+    dev_res=dev,
+    nobs=beta$nobs,
+    nvars=beta$nvars)
   return(L)
   }
  }
@@ -128,7 +127,9 @@ Summary_FL_GLM <- function(x, ...){
   cat("---\n")
   cat("Signif. codes: 0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1 \n\n")
   cat(paste0('(Dispersion parameter for ',x$regression," family taken to be ",round(x$dispersion,5),')\n \n'))
+  cat(paste0("Residual deviance: ",round(x$dev_res,2),"  on ",x$nobs-x$nvars," degrees of freedom \n \n"))
   cat(paste0('Number of Fisher Scoring iterations: ',x$iter,'\n'))
+
 }
 
 
