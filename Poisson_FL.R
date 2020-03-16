@@ -94,7 +94,7 @@ master_convergence=function(...,tol=1e-16,beta,iter,reg_type=c('gaussian','poiss
       pvalue <- 2 * pnorm(-abs(zvalue))
     }
     L=list(convergence=convergence,
-    coefficient=beta$coef[,ncol(beta$coef)],
+    coefficients=beta$coef[,ncol(beta$coef)],
     Std.Error=beta$se,
     pvalue=pvalue,
     zvalue=zvalue,
@@ -115,7 +115,7 @@ Summary_FL_GLM <- function(x, ...){
     cat("Model:\n")
   print(x$model)
   
-  DF=data.frame(round(x$coefficient,5),round(x$Std.Error,5),round(x$zvalue,3),round(x$pvalue,5),sign)
+  DF=data.frame(round(x$coefficients,5),round(x$Std.Error,5),round(x$zvalue,3),round(x$pvalue,5),sign)
   if(x$est.disp){
     names(DF)=c("Estimate","Std. Error","t value","Pr(>|t|)","")
   }else{

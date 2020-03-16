@@ -35,6 +35,20 @@ Summary_FL_GLM(M_2)
 summary(m <- glm(num_awards ~ prog + math, family="poisson", data=p))
 #summary(m <- glm(num_awards ~ 1, family="poisson", data=p))
 
+(s1 <- data.frame(math = mean(p$math),
+                  prog = factor(1:3, levels = 1:3, labels = levels(p$prog))))
+
+predict(m, type="response")[1:10]
+
+exp(m$coefficients[1]+
+  m$coefficients[2]*(p$prog=='Academic')+
+  m$coefficients[3]*(p$prog=='Vocational')+
+  m$coefficients[4]*p$math)[1:10]
+
+exp(M_2$coefficients[1]+
+      M_2$coefficients[2]*(p$prog=='Academic')+
+      M_2$coefficients[3]*(p$prog=='Vocational')+
+      M_2$coefficients[4]*p$math)[1:10]
 
 #####binomial example
 
