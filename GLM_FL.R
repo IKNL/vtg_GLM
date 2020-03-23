@@ -1,8 +1,8 @@
-node_beta=function(formula,Data,weights=NULL,family=gaussian,beta=NULL,iter){
+node_beta=function(formula,Data,weights=NULL,family=gaussian,beta=NULL,iter=1){
   y=eval(formula[[2]], envir = Data) #extract y and X varibales name from formula
   X=model.matrix(formula,data = Data) #create a model matrix 
   offset=model.offset(model.frame(formula,data = Data)) #extract the offset from formula (if exists)
-  
+  #functions of the family required (gaussian, poisson, logistic,...)
   if (is.character(family)) 
     family <- get(family, mode = "function", envir = parent.frame())
   if (is.function(family)) 
@@ -12,28 +12,32 @@ node_beta=function(formula,Data,weights=NULL,family=gaussian,beta=NULL,iter){
     stop("'family' not recognized")
   }
   
-  if (is.null(weights)) weights <- rep.int(1, nrow(X))
+  if (is.null(weights)) weights <- rep.int(1, nrow(X)) 
   if (is.null(offset)) offset <- rep.int(0, nrow(X))
+  
   nobs = nrow(X)    # needed by the initialize expression below
   nvars = ncol(X)   # needed by the initialize expression below
+  
   if(iter==1){
     etastart = NULL
     eval(family$initialize) # initializes n and fitted values mustart
     eta = family$linkfun(mustart) # we then initialize eta with this
   } else {
-    eta = (X %*% beta[,ncol(beta)]) + offset # potentially +offset if you would have an offset argument as well
+    eta = (X %*% beta[,ncol(beta)]) + offset #update eta
   }
   mu = family$linkinv(eta) 
   varg = family$variance(mu)
   gprime = family$mu.eta(eta)
-  z = (eta - offset) + (y - mu) / gprime # potentially -offset if you would have an offset argument as well
-  W = weights * as.vector(gprime^2 / varg)
-  dispersion <- sum(W *((y - mu)/family$mu.eta(eta))^2)
+  z = (eta - offset) + (y - mu) / gprime #calculate z
+  W = weights * as.vector(gprime^2 / varg) #update the weights
+  dispersion <- sum(W *((y - mu)/family$mu.eta(eta))^2) #calculate the dispersion matrix
   
   return(list(v1=crossprod(X,W*X),v2=crossprod(X,W*z),dispersion=dispersion,nobs=nobs,nvars=nvars))
 }
 
-master_beta=function(...,beta=NULL,family=gaussian){
+master_beta=function(...,nodes=NULL,beta=NULL,family=gaussian){
+  #receive as many object as many are the nodes involved in the analysis (...)
+  #the function update the betas
   if (is.character(family)) 
     family <- get(family, mode = "function", envir = parent.frame())
   if (is.function(family)) 
@@ -42,12 +46,17 @@ master_beta=function(...,beta=NULL,family=gaussian){
     print(family)
     stop("'family' not recognized")
   }
-  g <- list(...)
-  a=Reduce(`+`,lapply(1:length(g),function(j) g[[j]]$v1))
-  b=Reduce(`+`,lapply(1:length(g),function(j) g[[j]]$v2))
-  phi=Reduce(`+`,lapply(1:length(g),function(j) g[[j]]$dispersion))
-  nobs=Reduce(`+`,lapply(1:length(g),function(j) g[[j]]$nobs))
-  nvars=nrow(g[[1]]$v1)
+  if(is.null(nodes))  {
+    g <- list(...)  #place the dots into a list
+  }else{
+    g <- nodes   
+  }
+  a=Reduce(`+`,lapply(1:length(g),function(j) g[[j]]$v1)) #sum up components of the matrix to be inverted calculated in each node
+  b=Reduce(`+`,lapply(1:length(g),function(j) g[[j]]$v2)) #sum up components of the matrix to be inverted calculated in each node
+  phi=Reduce(`+`,lapply(1:length(g),function(j) g[[j]]$dispersion)) # sum up components dispersion matrix
+  nobs=Reduce(`+`,lapply(1:length(g),function(j) g[[j]]$nobs)) #total number of observation
+  nvars=nrow(g[[1]]$v1) #number of variables
+
   if(is.null(beta)){
     beta = rep(1, nvars)
   }else{
@@ -60,15 +69,17 @@ master_beta=function(...,beta=NULL,family=gaussian){
       disp=phi/(nobs-nvars)
       est.disp=T
     }
-  f=solve(a,b, tol=2*.Machine$double.eps)
-  se=sqrt(diag(solve(a)*disp))
+ 
+   f=solve(a,b, tol=2*.Machine$double.eps) #calculate the new betas
+  se=sqrt(diag(solve(a)*disp)) #calculate the Standard error of coefficients
   return(list(coef=cbind(beta,f),se=se,disp=disp,est.disp=est.disp,nobs=nobs,nvars=nvars))
 }
 
-node_deviance=function(formula,Data,weights=NULL,family=gaussian,beta,iter){
-  y=eval(formula[[2]], envir = Data)
-  X=model.matrix(formula,data = Data)
-  offset=model.offset(model.frame(formula,data = Data)) 
+node_deviance=function(formula,Data,weights=NULL,family=gaussian,beta,iter=1){
+  #the function calculate the residual deviance with updated betas for the single node
+  y=eval(formula[[2]], envir = Data) #extract y variable names
+  X=model.matrix(formula,data = Data) #extract X variables
+  offset=model.offset(model.frame(formula,data = Data)) #extract the offset
   if (is.character(family)) 
     family <- get(family, mode = "function", envir = parent.frame())
   if (is.function(family)) 
@@ -80,26 +91,28 @@ node_deviance=function(formula,Data,weights=NULL,family=gaussian,beta,iter){
   if (is.null(weights)) weights <- rep.int(1, nrow(X))
   if (is.null(offset)) offset <- rep.int(0, nrow(X))
   
-  if(iter==1){
+  if(iter==1){ #only for first iteration
     etastart = NULL
     nobs = nrow(X)    # needed by the initialize expression below
     nvars = ncol(X)   # needed by the initialize expression below
     eval(family$initialize) # initializes n and fitted values mustart
-    eta = family$linkfun(mustart) + offset# we then initialize eta with this
+    eta = family$linkfun(mustart) + offset # we then initialize eta
     mu_old = family$linkinv(eta)
     dev_old=0
   }else{
     mu_old = family$linkinv(X %*% beta[,ncol(beta)-1]) 
     dev_old=sum(family$dev.resids(y, mu_old,weights))
   }
-  eta = X %*% beta[,ncol(beta)] +offset # potentially +offset if you would have an offset argument as well
-  mu = family$linkinv(eta-offset) 
-  dev = sum(family$dev.resids(y, mu,weights))
+  eta = X %*% beta[,ncol(beta)] +offset #calcaute updated eta
+  mu = family$linkinv(eta-offset)  
+  dev = sum(family$dev.resids(y, mu,weights)) #calculate new deviance
   return(list(dev_old=dev_old,dev=dev))
 }
 
-master_convergence=function(...,tol= 1e-08,beta,iter,family=gaussian,formula,maxit=25){
-  if (is.character(family)) 
+master_deviance=function(...,nodes=NULL,tol= 1e-08,beta,iter,family=gaussian,formula,maxit=25){
+  #receive as many object as many are the nodes involved in the analysis (...)
+  #the function evaluate if the algorithm converge
+   if (is.character(family)) 
     family <- get(family, mode = "function", envir = parent.frame())
   if (is.function(family)) 
     family <- family()
@@ -107,10 +120,14 @@ master_convergence=function(...,tol= 1e-08,beta,iter,family=gaussian,formula,max
     print(family)
     stop("'family' not recognized")
   }
-  x <- list(...)
-  dev_old=Reduce(`+`,lapply(1:length(x),function(j) x[[j]]$dev_old))
-  dev=Reduce(`+`,lapply(1:length(x),function(j) x[[j]]$dev))
-  convergence=(abs(dev - dev_old) / (0.1 + abs(dev)) < tol)
+  if(is.null(nodes))  {
+    x <- list(...)  #place the dots into a list
+  }else{
+    x <- nodes   
+  }
+  dev_old=Reduce(`+`,lapply(1:length(x),function(j) x[[j]]$dev_old)) #sum up deviance of previous iteration
+  dev=Reduce(`+`,lapply(1:length(x),function(j) x[[j]]$dev)) #sum up new deviance
+  convergence=(abs(dev - dev_old) / (0.1 + abs(dev)) < tol) #evaluate if algorithm  converge
   if(convergence==FALSE & iter<maxit){
     return(list(converged=convergence))
   }else{
@@ -136,10 +153,11 @@ master_convergence=function(...,tol= 1e-08,beta,iter,family=gaussian,formula,max
           nvars=beta$nvars)
   return(L)
   }
+  #return a list of output only if the algorithm converge
  }
 
 as.GLM <- function(obj, data=NULL) {
-  
+  #fill a GLM object with output of the Federated Learning GLM
   dots <- as.list(obj$coefficients)
   
   out<-list()
@@ -277,10 +295,12 @@ as.GLM <- function(obj, data=NULL) {
   
 }
 
-Summary_FL_GLM <- function(obj, ...){
+summary_FL_GLM <- function(obj, ...){
+  #Summarize the output of the GLM in a user-friendly tableS
   sign=cut(obj$pvalue,c(0,0.001,0.01,0.05,0.1,1),include.lowest = T,labels=c('***','**','*','.',''))
-    cat("Model:\n")
-  print(obj$formula)
+    cat("Call:\n")
+    print(call("glm_FL",obj$formula,family=obj$family$family))
+ # print(obj$formula)
   
   DF=data.frame(round(obj$coefficients,5),round(obj$Std.Error,5),round(obj$zvalue,3),round(obj$pvalue,5),sign)
   if(obj$est.disp){
@@ -293,32 +313,25 @@ Summary_FL_GLM <- function(obj, ...){
   
   cat("---\n")
   cat("Signif. codes: 0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1 \n\n")
-  cat(paste0('(Dispersion parameter for ',obj$regression," family taken to be ",round(obj$dispersion,5),')\n \n'))
+  cat(paste0('(Dispersion parameter for ',obj$family$family," family taken to be ",round(obj$dispersion,5),')\n \n'))
   cat(paste0("Residual deviance: ",round(obj$deviance,2),"  on ",obj$nobs-obj$nvars," degrees of freedom \n \n"))
   cat(paste0('Number of Fisher Scoring iterations: ',obj$iter,'\n'))
 
 }
 
-
-# 
-# glm_obj=list(
-#   call=paste0('glm_FL(formula = ',Reduce(paste, deparse(formula)),', family = ',reg_type,')'),
-#   coefficients=beta$coef[,ncol(beta$coef)],
-#   rank=beta$nvars+1,
-#   family=reg_type,
-#   deviance=dev,
-#   null.deviance=dev,
-#   iter=iter,
-#   df.null=beta$nobs-1,
-#   df.residual=beta$nobs-beta$nvars,
-#   converged=convergence,
-#   formula=formula,
-#   aic=0,
-#   control=list(epsilon=tol,maxit=maxit),
-#   terms=terms.formula(f)
-# ) 
-# L=structure(glm_obj, class = "glm")
+FL_GLM=function(...,f,family,maxit=25,tol=1e-08){
+  data=list(...)
+  Master_1=NULL
+  for(j in 1:maxit){
+    Node_1=lapply(data,function(p) node_beta(formula = f,Data = p,beta = Master_1$coef,iter = j,family =family))
+    Master_1=master_beta(nodes=Node_1,beta = Master_1,family = family)
+    Node_2=lapply(data,function(p) node_deviance(formula = f,Data = p,beta = Master_1$coef,iter = j,family =family))
+    Master_2=master_deviance(nodes=Node_2,beta=Master_1,iter=j,family = family,formula = f,maxit=maxit)
+    if(Master_2$converged)break
+  }
+  return(Master_2)
+}
 
 
-# 
-# 
+
+                
