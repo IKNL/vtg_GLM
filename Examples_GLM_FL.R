@@ -12,26 +12,37 @@ p <- within(p, {
   id <- factor(id)
 })
 
-p1=p[1:(nrow(p)/2),-1]
-p2=p[(nrow(p)/2+1):nrow(p),-1]
+p1=p[1:66,-1]
+p2=p[67:130,-1]
+p3=p[131:nrow(p),-1]
 
-maxit=25 
-tol=1e-16
+M_2=FL_GLM(p1,p2,p3,f = num_awards ~ prog + math,family = 'poisson')
+summary_FL_GLM(M_2)
+predict(as.GLM(M_2),type = 'response',p[1:10,])
 
+
+summary(m <- glm(num_awards ~ prog + math, family="poisson", data=p))
+
+summary_FL_GLM(m1 <-FL_GLM(p1,p2,p3,f = num_awards ~ 1,family = 'poisson'))
+summary(m <- glm(num_awards ~ 1, family="poisson", data=p))
+
+maxit=25
 M_1=NULL
-f=num_awards ~ prog + math
+f = num_awards ~ prog + math
 #iterations
 for(j in 1:maxit){
-  N_1=node_beta(formula = f,Data = p1,beta = M_1$coef,iter = j,family = 'poisson')
-  N_2=node_beta(formula = f,Data = p2,beta = M_1$coef,iter = j,family = 'poisson')
-  M_1=master_beta(N_1,N_2,beta = M_1,family = 'poisson')
-  D_1=node_deviance(formula = f,Data = p1,beta = M_1$coef,iter = j,family = 'poisson')
-  D_2=node_deviance(formula = f,Data = p2,beta = M_1$coef,iter = j,family = 'poisson')
-  M_2=master_convergence(D_1,D_2,beta=M_1,iter=j,family = 'poisson',formula = f,maxit=maxit)
+  N_1=node_beta(formula = f,Data = p1,beta = M_1,iter = j,family = 'poisson')
+  N_2=node_beta(formula = f,Data = p2,beta = M_1,iter = j,family = 'poisson')
+  N_3=node_beta(formula = f,Data = p3,beta = M_1,iter = j,family = 'poisson')
+  M_1=master_beta(N_1,N_2,N_3,beta = M_1,family = 'poisson')
+  D_1=node_deviance(formula = f,Data = p1,beta = M_1,iter = j,family = 'poisson')
+  D_2=node_deviance(formula = f,Data = p2,beta = M_1,iter = j,family = 'poisson')
+  D_3=node_deviance(formula = f,Data = p3,beta = M_1,iter = j,family = 'poisson')
+  M_2=master_deviance(D_1,D_2,D_3,beta=M_1,iter=j,family = 'poisson',formula = f,maxit=maxit)
   if(M_2$converged)break
 }
 
-Summary_FL_GLM(M_2)
+summary_FL_GLM(M_2)
 summary(m <- glm(num_awards ~ prog + math, family="poisson", data=p))
 
 predict(m, type="response")[1:10]

@@ -23,8 +23,9 @@ node_beta=function(formula,Data,weights=NULL,family=gaussian,beta=NULL,iter=1){
     eval(family$initialize) # initializes n and fitted values mustart
     eta = family$linkfun(mustart) # we then initialize eta with this
   } else {
-    eta = (X %*% beta[,ncol(beta)]) + offset #update eta
+    eta = (X %*% beta$coef[,ncol(beta$coef)]) + offset #update eta
   }
+
   mu = family$linkinv(eta) 
   varg = family$variance(mu)
   gprime = family$mu.eta(eta)
@@ -32,7 +33,9 @@ node_beta=function(formula,Data,weights=NULL,family=gaussian,beta=NULL,iter=1){
   W = weights * as.vector(gprime^2 / varg) #update the weights
   dispersion <- sum(W *((y - mu)/family$mu.eta(eta))^2) #calculate the dispersion matrix
   
-  return(list(v1=crossprod(X,W*X),v2=crossprod(X,W*z),dispersion=dispersion,nobs=nobs,nvars=nvars))
+
+  return(list(v1=crossprod(X,W*X),v2=crossprod(X,W*z),dispersion=dispersion,
+              nobs=nobs,nvars=nvars,wt1=sum(weights * y),wt2=sum(weights)))
 }
 
 master_beta=function(...,nodes=NULL,beta=NULL,family=gaussian){
@@ -51,6 +54,8 @@ master_beta=function(...,nodes=NULL,beta=NULL,family=gaussian){
   }else{
     g <- nodes   
   }
+  allwt=Reduce(`+`,lapply(1:length(g),function(j) g[[j]]$wt2)) #total sum o fweights
+  wtdmu=Reduce(`+`,lapply(1:length(g),function(j) g[[j]]$wt1/allwt)) #global weighted mu
   a=Reduce(`+`,lapply(1:length(g),function(j) g[[j]]$v1)) #sum up components of the matrix to be inverted calculated in each node
   b=Reduce(`+`,lapply(1:length(g),function(j) g[[j]]$v2)) #sum up components of the matrix to be inverted calculated in each node
   phi=Reduce(`+`,lapply(1:length(g),function(j) g[[j]]$dispersion)) # sum up components dispersion matrix
@@ -70,9 +75,10 @@ master_beta=function(...,nodes=NULL,beta=NULL,family=gaussian){
       est.disp=T
     }
  
-   f=solve(a,b, tol=2*.Machine$double.eps) #calculate the new betas
+  fb=solve(a,b, tol=2*.Machine$double.eps) #calculate the new betas
   se=sqrt(diag(solve(a)*disp)) #calculate the Standard error of coefficients
-  return(list(coef=cbind(beta,f),se=se,disp=disp,est.disp=est.disp,nobs=nobs,nvars=nvars))
+  return(list(coef=cbind(beta,fb),se=se,disp=disp,est.disp=est.disp,
+              nobs=nobs,nvars=nvars,wtdmu=wtdmu))
 }
 
 node_deviance=function(formula,Data,weights=NULL,family=gaussian,beta,iter=1){
@@ -100,13 +106,14 @@ node_deviance=function(formula,Data,weights=NULL,family=gaussian,beta,iter=1){
     mu_old = family$linkinv(eta)
     dev_old=0
   }else{
-    mu_old = family$linkinv(X %*% beta[,ncol(beta)-1]) 
+    mu_old = family$linkinv(X %*% beta$coef[,ncol(beta$coef)-1]) 
     dev_old=sum(family$dev.resids(y, mu_old,weights))
   }
-  eta = X %*% beta[,ncol(beta)] +offset #calcaute updated eta
+  eta = X %*% beta$coef[,ncol(beta$coef)] +offset #calcaute updated eta
   mu = family$linkinv(eta-offset)  
   dev = sum(family$dev.resids(y, mu,weights)) #calculate new deviance
-  return(list(dev_old=dev_old,dev=dev))
+  dev.null=sum(family$dev.resids(y, beta$wtdmu,weights))
+  return(list(dev_old=dev_old,dev=dev,dev.null=dev.null))
 }
 
 master_deviance=function(...,nodes=NULL,tol= 1e-08,beta,iter,family=gaussian,formula,maxit=25){
@@ -127,6 +134,7 @@ master_deviance=function(...,nodes=NULL,tol= 1e-08,beta,iter,family=gaussian,for
   }
   dev_old=Reduce(`+`,lapply(1:length(x),function(j) x[[j]]$dev_old)) #sum up deviance of previous iteration
   dev=Reduce(`+`,lapply(1:length(x),function(j) x[[j]]$dev)) #sum up new deviance
+  dev.null=Reduce(`+`,lapply(1:length(x),function(j) x[[j]]$dev.null)) #sum up null deviance
   convergence=(abs(dev - dev_old) / (0.1 + abs(dev)) < tol) #evaluate if algorithm  converge
   if(convergence==FALSE & iter<maxit){
     return(list(converged=convergence))
@@ -148,7 +156,7 @@ master_deviance=function(...,nodes=NULL,tol= 1e-08,beta,iter,family=gaussian,for
           family=family,
           iter=iter,
           deviance=dev,
-          null.deviance=dev,
+          null.deviance=dev.null,
           nobs=beta$nobs,
           nvars=beta$nvars)
   return(L)
@@ -314,6 +322,7 @@ summary_FL_GLM <- function(obj, ...){
   cat("---\n")
   cat("Signif. codes: 0 '***' 0.001 '**' 0.01 '*' 0.05 '.' 0.1 ' ' 1 \n\n")
   cat(paste0('(Dispersion parameter for ',obj$family$family," family taken to be ",round(obj$dispersion,5),')\n \n'))
+  cat(paste0("Null deviance: ",round(obj$null.deviance,2),"  on ",obj$nobs-1," degrees of freedom \n"))
   cat(paste0("Residual deviance: ",round(obj$deviance,2),"  on ",obj$nobs-obj$nvars," degrees of freedom \n \n"))
   cat(paste0('Number of Fisher Scoring iterations: ',obj$iter,'\n'))
 
@@ -323,9 +332,9 @@ FL_GLM=function(...,f,family,maxit=25,tol=1e-08){
   data=list(...)
   Master_1=NULL
   for(j in 1:maxit){
-    Node_1=lapply(data,function(p) node_beta(formula = f,Data = p,beta = Master_1$coef,iter = j,family =family))
+    Node_1=lapply(data,function(p) node_beta(formula = f,Data = p,beta = Master_1,iter = j,family =family))
     Master_1=master_beta(nodes=Node_1,beta = Master_1,family = family)
-    Node_2=lapply(data,function(p) node_deviance(formula = f,Data = p,beta = Master_1$coef,iter = j,family =family))
+    Node_2=lapply(data,function(p) node_deviance(formula = f,Data = p,beta = Master_1,iter = j,family =family))
     Master_2=master_deviance(nodes=Node_2,beta=Master_1,iter=j,family = family,formula = f,maxit=maxit)
     if(Master_2$converged)break
   }
