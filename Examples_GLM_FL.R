@@ -59,6 +59,13 @@ maxit=25
 tol=1e-16
 M_1=NULL
 f=admit ~ gre+gpa+rank
+
+M_2=FL_GLM(df1,df2,f = f,family = 'binomial')
+summary_FL_GLM(M_2)
+
+
+predict(as.GLM(M_2),type = 'response',p[1:10,])
+
 #iterations
 for(j in 1:maxit){
   N_1=node_beta(formula =f,Data = df1,beta = M_1$coef,iter = j,family = 'binomial')
@@ -71,6 +78,8 @@ for(j in 1:maxit){
 }
 Summary_FL_GLM(M_2)
 summary(logit <- glm(admit ~ gre+gpa+rank,data=df,family="binomial"))
+predict(logit)[1:10]
+predict(as.GLM(M_2),df[1:10,])
 
 
 
