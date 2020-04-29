@@ -1,4 +1,11 @@
-node_beta=function(formula,Data,weights=NULL,family=gaussian,beta=NULL,iter=1){
+master_init=function(formula,family=gaussian,tol= 1e-08,maxit=25){
+  saveRDS(list(formula=formula,family=family,iter=1,tol= tol,maxit=maxit),"master.Rds")
+}
+
+node_beta=function(Data,weights=NULL,master=NULL,userID){
+  #if(is.null(user)){ print("Please specify the user number (1,2,3,....)"); break}
+  formula=master$formula 
+  family=master$family 
   y=eval(formula[[2]], envir = Data) #extract y and X varibales name from formula
   X=model.matrix(formula,data = Data) #create a model matrix 
   offset=model.offset(model.frame(formula,data = Data)) #extract the offset from formula (if exists)
@@ -18,12 +25,12 @@ node_beta=function(formula,Data,weights=NULL,family=gaussian,beta=NULL,iter=1){
   nobs = nrow(X)    # needed by the initialize expression below
   nvars = ncol(X)   # needed by the initialize expression below
   
-  if(iter==1){
+  if(master$iter==1){
     etastart = NULL
     eval(family$initialize) # initializes n and fitted values mustart
     eta = family$linkfun(mustart) # we then initialize eta with this
   } else {
-    eta = (X %*% beta$coef[,ncol(beta$coef)]) + offset #update eta
+    eta = (X %*% master$coef[,ncol(master$coef)]) + offset #update eta
   }
 
   mu = family$linkinv(eta) 
@@ -32,15 +39,17 @@ node_beta=function(formula,Data,weights=NULL,family=gaussian,beta=NULL,iter=1){
   z = (eta - offset) + (y - mu) / gprime #calculate z
   W = weights * as.vector(gprime^2 / varg) #update the weights
   dispersion <- sum(W *((y - mu)/family$mu.eta(eta))^2) #calculate the dispersion matrix
-  
-
-  return(list(v1=crossprod(X,W*X),v2=crossprod(X,W*z),dispersion=dispersion,
-              nobs=nobs,nvars=nvars,wt1=sum(weights * y),wt2=sum(weights)))
+  output=list(v1=crossprod(X,W*X),v2=crossprod(X,W*z),dispersion=dispersion,
+              nobs=nobs,nvars=nvars,wt1=sum(weights * y),wt2=sum(weights))
+  saveRDS(output,file = paste0(userID,'.Rds'))
+  #return(output)
 }
 
-master_beta=function(...,nodes=NULL,beta=NULL,family=gaussian){
+master_beta=function(...,nodes=NULL,master=NULL){
   #receive as many object as many are the nodes involved in the analysis (...)
   #the function update the betas
+  formula=master$formula 
+  family=master$family 
   if (is.character(family)) 
     family <- get(family, mode = "function", envir = parent.frame())
   if (is.function(family)) 
@@ -62,10 +71,10 @@ master_beta=function(...,nodes=NULL,beta=NULL,family=gaussian){
   nobs=Reduce(`+`,lapply(1:length(g),function(j) g[[j]]$nobs)) #total number of observation
   nvars=nrow(g[[1]]$v1) #number of variables
 
-  if(is.null(beta)){
+  if(is.null(master)){
     beta = rep(1, nvars)
   }else{
-    beta=beta$coef
+    beta=master$coef
   }
   if(family$family %in% c('poisson','binomial')){
       disp=1
@@ -77,11 +86,23 @@ master_beta=function(...,nodes=NULL,beta=NULL,family=gaussian){
  
   fb=solve(a,b, tol=2*.Machine$double.eps) #calculate the new betas
   se=sqrt(diag(solve(a)*disp)) #calculate the Standard error of coefficients
-  return(list(coef=cbind(beta,fb),se=se,disp=disp,est.disp=est.disp,
-              nobs=nobs,nvars=nvars,wtdmu=wtdmu))
+ 
+    master$coef=cbind(master$coef,fb)
+    master$se=se
+    master$disp=disp
+    master$est.disp=est.disp
+    master$nobs=nobs
+    master$nvars=nvars
+    master$wtdmu=wtdmu
+ 
+  saveRDS(master,file = paste0("master.Rds"))
+  #return(output)
 }
 
-node_deviance=function(formula,Data,weights=NULL,family=gaussian,beta,iter=1){
+node_deviance=function(Data,weights=NULL,master,userID){
+  #the function update the betas
+  formula=master$formula 
+  family=master$family 
   #the function calculate the residual deviance with updated betas for the single node
   y=eval(formula[[2]], envir = Data) #extract y variable names
   X=model.matrix(formula,data = Data) #extract X variables
@@ -97,7 +118,7 @@ node_deviance=function(formula,Data,weights=NULL,family=gaussian,beta,iter=1){
   if (is.null(weights)) weights <- rep.int(1, nrow(X))
   if (is.null(offset)) offset <- rep.int(0, nrow(X))
   
-  if(iter==1){ #only for first iteration
+  if(master$iter==1){ #only for first iteration
     etastart = NULL
     nobs = nrow(X)    # needed by the initialize expression below
     nvars = ncol(X)   # needed by the initialize expression below
@@ -106,20 +127,27 @@ node_deviance=function(formula,Data,weights=NULL,family=gaussian,beta,iter=1){
     mu_old = family$linkinv(eta)
     dev_old=0
   }else{
-    mu_old = family$linkinv(X %*% beta$coef[,ncol(beta$coef)-1]) 
+    mu_old = family$linkinv(X %*% master$coef[,ncol(master$coef)-1]) 
     dev_old=sum(family$dev.resids(y, mu_old,weights))
   }
-  eta = X %*% beta$coef[,ncol(beta$coef)] +offset #calcaute updated eta
+  eta = X %*% master$coef[,ncol(master$coef)] +offset #calcaute updated eta
   mu = family$linkinv(eta-offset)  
   dev = sum(family$dev.resids(y, mu,weights)) #calculate new deviance
-  dev.null=sum(family$dev.resids(y, beta$wtdmu,weights))
-  return(list(dev_old=dev_old,dev=dev,dev.null=dev.null))
+  dev.null=sum(family$dev.resids(y, master$wtdmu,weights))
+  output=list(dev_old=dev_old,dev=dev,dev.null=dev.null)
+  saveRDS(output,file = paste0(userID,".Rds"))
+  #return(output)
 }
 
-master_deviance=function(...,nodes=NULL,tol= 1e-08,beta,iter,family=gaussian,formula,maxit=25){
+master_deviance=function(...,nodes=NULL,master){
   #receive as many object as many are the nodes involved in the analysis (...)
   #the function evaluate if the algorithm converge
-   if (is.character(family)) 
+  #the function update the betas
+  tol=master$tol
+  maxit=master$maxit
+  formula=master$formula
+  family=master$family 
+  if (is.character(family)) 
     family <- get(family, mode = "function", envir = parent.frame())
   if (is.function(family)) 
     family <- family()
@@ -136,30 +164,35 @@ master_deviance=function(...,nodes=NULL,tol= 1e-08,beta,iter,family=gaussian,for
   dev=Reduce(`+`,lapply(1:length(x),function(j) x[[j]]$dev)) #sum up new deviance
   dev.null=Reduce(`+`,lapply(1:length(x),function(j) x[[j]]$dev.null)) #sum up null deviance
   convergence=(abs(dev - dev_old) / (0.1 + abs(dev)) < tol) #evaluate if algorithm  converge
-  if(convergence==FALSE & iter<maxit){
-    return(list(converged=convergence))
+  if(convergence==FALSE & master$iter<maxit){
+      master$converged=convergence
+      master$iter=master$iter+1
+ 
+    saveRDS(master,file = paste0("master.Rds"))
+    #return(output)
   }else{
-   zvalue <- beta$coef[,ncol(beta$coef)]/beta$se
-    if(beta$est.disp){
-      pvalue <- 2 * pt(-abs(zvalue), beta$nobs-beta$nvars)
+   zvalue <- master$coef[,ncol(master$coef)]/master$se
+    if(master$est.disp){
+      pvalue <- 2 * pt(-abs(zvalue), master$nobs-master$nvars)
     }else{
       pvalue <- 2 * pnorm(-abs(zvalue))
     }
-   L=list(converged=convergence,
-          coefficients=beta$coef[,ncol(beta$coef)],
-          Std.Error=beta$se,
+   master=list(converged=TRUE,
+          coefficients=master$coef[,ncol(master$coef)],
+          Std.Error=master$se,
           pvalue=pvalue,
           zvalue=zvalue,
-          dispersion=beta$disp,
-          est.disp=beta$est.disp,
-          formula=formula,
+          dispersion=master$disp,
+          est.disp=master$est.disp,
+          formula=master$formula,
           family=family,
-          iter=iter,
+          iter=master$iter,
           deviance=dev,
           null.deviance=dev.null,
-          nobs=beta$nobs,
-          nvars=beta$nvars)
-  return(L)
+          nobs=master$nobs,
+          nvars=master$nvars)
+   saveRDS(master,file = paste0("master.Rds"))
+   #return(output)
   }
   #return a list of output only if the algorithm converge
  }
